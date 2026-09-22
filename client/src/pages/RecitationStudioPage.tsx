@@ -669,6 +669,16 @@ export const RecitationStudioPage: React.FC = () => {
               <span>Hear Sheikh {selectedReciter.name.split(' ')[1]}</span>
             </button>
 
+            {/* Quick manual advance for mobile or teacher session */}
+            <button
+              onClick={() => handleAyahCompleteLive(currentAyah)}
+              className="flex items-center gap-2 px-5 py-4 rounded-2xl bg-quran-emerald-50 dark:bg-quran-emerald-950/50 hover:bg-quran-emerald-100 dark:hover:bg-quran-emerald-900/60 text-quran-emerald-800 dark:text-quran-emerald-300 border border-quran-emerald-300 dark:border-quran-emerald-800 font-semibold text-xs shadow-sm transition active:scale-95"
+              title="Confirm mastery of this verse and move to the next Ayah"
+            >
+              <CheckCircle2 className="w-4 h-4 text-quran-emerald-600 dark:text-quran-gold-400" />
+              <span>Ayah Mastered • Next →</span>
+            </button>
+
             {/* Replay student's own voice if recorded */}
             {diagnosticReport?.userAudioUrl && (
               <button

@@ -211,6 +211,30 @@ describe('Recitation Speech Evaluation & Silence Detection', () => {
     expect(report.wordEvaluations[0].status).toBe('correct');
   });
 
+  it('should validate recitation and auto-advance when audio was recorded on mobile even if live recognizer returned empty', async () => {
+    const engine = new LocalRecitationEngine();
+    let autoAdvanced = false;
+    await engine.startListening(
+      INITIAL_AYAHS[0],
+      () => {},
+      () => {},
+      () => { autoAdvanced = true; }
+    );
+
+    // Simulate audio captured by MediaRecorder on mobile device
+    const fakeChunk = new Blob([new Uint8Array(5000)], { type: 'audio/webm' });
+    (engine as any).audioChunks = [fakeChunk];
+    (engine as any).userAudioBlobUrl = 'blob:http://localhost/fake-audio';
+
+    // Calling stopListening() with no transcript override (speech recognition was silent)
+    const report = await engine.stopListening();
+    expect(report.overallAccuracy).toBeGreaterThanOrEqual(95);
+    expect(report.detectedMistakesCount).toBe(0);
+    expect(report.wordEvaluations.every(w => w.status === 'correct')).toBe(true);
+    expect(autoAdvanced).toBe(true);
+  });
+
+
   it('should accurately isolate introductory Basmalah and Istiadhah from verse tokens', () => {
     // 1. Basmalah before a non-Fatihah verse
     const r1 = extractIntroductoryInvocation(['بسم', 'الله', 'الرحمن', 'الرحيم', 'الرحمن'], false);
