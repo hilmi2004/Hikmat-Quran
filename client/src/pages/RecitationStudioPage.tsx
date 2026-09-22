@@ -23,6 +23,7 @@ import { SURAH_LIST, RECITERS_LIST } from '../data/quranDataset';
 import { quranContentService } from '../services/quran/QuranContentService';
 import { localRecitationEngine } from '../services/ai/LocalRecitationEngine';
 import { RecitationDiagnosticReport, RecitedWordEvaluation } from '../services/ai/RecitationEngine';
+import { getSpeechPlatformNotice, isIOSNonSafari } from '../utils/mobileSpeechHelper';
 
 export const RecitationStudioPage: React.FC = () => {
   const [surahs, setSurahs] = useState<Surah[]>(SURAH_LIST);
@@ -132,10 +133,10 @@ export const RecitationStudioPage: React.FC = () => {
 
   const currentAyah = ayahs[selectedAyahIndex];
 
-  // Real-time audio volume visualizer loop with noise suppression
-  const setupVolumeMeter = async () => {
+  // Real-time audio volume visualizer loop with shared stream (zero device conflict)
+  const setupVolumeMeter = async (existingStream?: MediaStream) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = existingStream || localRecitationEngine.getMediaStream() || await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -217,7 +218,7 @@ export const RecitationStudioPage: React.FC = () => {
     }
   };
 
-  // Start live microphone recitation
+  // Start live microphone recitation (Synchronously hooks Safari user gesture)
   const handleStartRecording = async () => {
     if (!currentAyah) return;
     setDiagnosticReport(null);
@@ -233,10 +234,9 @@ export const RecitationStudioPage: React.FC = () => {
       setRecordingSeconds(prev => prev + 1);
     }, 1000);
 
-    setupVolumeMeter();
-
     try {
-      await localRecitationEngine.startListening(
+      // Start listening synchronously FIRST to satisfy iOS Safari gesture activation
+      const startTask = localRecitationEngine.startListening(
         currentAyah,
         (wordIdx, transcript, correctIndices, mistakeIndices) => {
           setActiveWordIndex(wordIdx);
@@ -250,6 +250,9 @@ export const RecitationStudioPage: React.FC = () => {
         handleAyahCompleteLive
       );
       setIsRecording(true);
+      await startTask;
+      // Connect volume visualizer to the engine's stream once acquired
+      setupVolumeMeter(localRecitationEngine.getMediaStream() || undefined);
     } catch (e: any) {
       clearInterval(timerIntervalRef.current);
       cleanupVolumeMeter();
@@ -413,6 +416,19 @@ export const RecitationStudioPage: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+      {/* Mobile Notice for iOS third-party browsers */}
+      {isIOSNonSafari() && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3 shadow-sm">
+          <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-bold">Notice for iPhone & iPad users:</p>
+            <p className="leading-relaxed text-stone-700 dark:text-stone-300">
+              Apple restricts live Speech Recognition exclusively to Safari. In other mobile browsers, live speech highlights may not trigger. Please open Hikmat Quran directly in Safari for the optimal live experience, or use manual recitation confirmation.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Studio Header & Configuration Bar */}
       <div className="p-5 rounded-3xl bg-white dark:bg-quran-dark-900 border border-quran-parchment-200 dark:border-quran-dark-800 shadow-sm flex flex-wrap items-center justify-between gap-4">
         {/* Surah Dropdown (All 114 Surahs) */}
@@ -668,6 +684,23 @@ export const RecitationStudioPage: React.FC = () => {
           {errorMessage && (
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-300">
               {errorMessage}
+            </div>
+          )}
+
+          {/* Mobile / Silent Recognizer Recitation Fallback: Audio was captured */}
+          {diagnosticReport && diagnosticReport.overallAccuracy === 0 && diagnosticReport.userAudioUrl && (
+            <div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-emerald-900 dark:text-emerald-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-quran-emerald-600 dark:text-quran-gold-400 shrink-0" />
+                <span>Your voice was recorded successfully! If live speech detection was restricted on your mobile browser, you can confirm this Ayah:</span>
+              </div>
+              <button
+                onClick={() => handleAyahCompleteLive(currentAyah)}
+                className="px-4 py-2 rounded-xl bg-quran-emerald-800 hover:bg-quran-emerald-900 text-white font-bold text-xs shrink-0 flex items-center gap-1.5 shadow-sm active:scale-95 transition"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-quran-gold-400" />
+                <span>Confirm Recitation & Next</span>
+              </button>
             </div>
           )}
 

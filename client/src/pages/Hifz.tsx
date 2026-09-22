@@ -34,6 +34,7 @@ import {
   bestWindowDistance,
   extractIntroductoryInvocation
 } from '../services/ai/LocalRecitationEngine';
+import { isMobileDevice, isIOSNonSafari, getSupportedAudioMimeType } from '../utils/mobileSpeechHelper';
 
 export type HifzMode = 
   | 'tasma'           // Blind Oral Recall: Shows verse numbers, fills up as you recite
@@ -207,18 +208,9 @@ export const Hifz: React.FC = () => {
   const currentAyah = ayahs[activeAyahIndex] || ayahs[0];
   const nextAyah = ayahs[activeAyahIndex + 1] || null;
 
-  // Real-time audio volume visualizer
-  const setupVolumeMeter = async () => {
+  // Real-time audio volume visualizer (attached to shared stream)
+  const setupVolumeMeter = (stream: MediaStream) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
-      });
-      mediaStreamRef.current = stream;
-
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
@@ -278,42 +270,15 @@ export const Hifz: React.FC = () => {
     activeAyahIndexRef.current = activeAyahIndex;
     isTransitioningRef.current = false;
 
-    timerIntervalRef.current = setInterval(() => {
-      setRecordingSeconds(prev => prev + 1);
-    }, 1000);
-
-    await setupVolumeMeter();
-
-    // Setup MediaRecorder for replaying student's voice
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
-        audioChunksRef.current = [];
-        const recorder = new MediaRecorder(stream);
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-        recorder.start(250);
-        mediaRecorderRef.current = recorder;
-      } catch (e) {
-        console.warn('[Hifz] MediaRecorder error:', e);
-      }
-    }
-
-    // Setup Speech Recognition
+    // 1. CRITICAL FOR MOBILE: Start SpeechRecognition SYNCHRONOUSLY FIRST in the user tap gesture stack
     if (typeof window !== 'undefined') {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
-        recognition.continuous = true;
+        const isMobile = isMobileDevice();
+        recognition.continuous = !isMobile;
         recognition.interimResults = true;
-        recognition.maxAlternatives = 5;
+        recognition.maxAlternatives = isMobile ? 1 : 5;
         recognition.lang = 'ar-SA';
 
         recognition.onresult = (event: any) => {
@@ -375,6 +340,37 @@ export const Hifz: React.FC = () => {
       }
     }
 
+    timerIntervalRef.current = setInterval(() => {
+      setRecordingSeconds(prev => prev + 1);
+    }, 1000);
+
+    // 2. Setup MediaRecorder and volume meter on a single shared MediaStream (deferred to avoid mic lock)
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        mediaStreamRef.current = stream;
+        audioChunksRef.current = [];
+        const mimeType = getSupportedAudioMimeType();
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        };
+        recorder.start(250);
+        mediaRecorderRef.current = recorder;
+
+        // Visualizer shares the exact same stream
+        setupVolumeMeter(stream);
+      } catch (e) {
+        console.warn('[Hifz] MediaRecorder error:', e);
+      }
+    }
+
     setIsRecording(true);
   };
 
@@ -396,7 +392,8 @@ export const Hifz: React.FC = () => {
     }
 
     if (audioChunksRef.current.length > 0) {
-      const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      const mimeType = getSupportedAudioMimeType() || 'audio/webm';
+      const blob = new Blob(audioChunksRef.current, { type: mimeType });
       setUserRecordedAudioUrl(URL.createObjectURL(blob));
     }
   };
@@ -515,6 +512,39 @@ export const Hifz: React.FC = () => {
         setSessionCompleted(true);
         stopTasmaRecitation();
       }
+    }
+  };
+
+  // Manual confirmation fallback (especially useful on mobile browsers without native speech recognition)
+  const handleConfirmAndAdvanceAyah = (targetIdx: number) => {
+    const target = ayahs[targetIdx];
+    if (!target) return;
+
+    const newStates = [...tasmaAyahStatesRef.current];
+    newStates[targetIdx] = {
+      ayahNumber: target.ayahNumber,
+      isCompleted: true,
+      hasMistake: false,
+      wordStates: target.words.map(w => ({ word: w, status: 'correct' }))
+    };
+    tasmaAyahStatesRef.current = newStates;
+    setTasmaAyahStates(newStates);
+
+    if (targetIdx + 1 < ayahs.length) {
+      const nextIdx = targetIdx + 1;
+      activeAyahIndexRef.current = nextIdx;
+      setActiveAyahIndex(nextIdx);
+      playMasteryChime();
+      setMasteredAyahToast(`🎉 Ayah ${target.ayahNumber} Confirmed! Flowing to Ayah ${target.ayahNumber + 1}...`);
+      setTimeout(() => {
+        const el = document.getElementById(`tasma-ayah-${target.ayahNumber + 1}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+      setTimeout(() => setMasteredAyahToast(null), 3000);
+    } else {
+      playMasteryChime();
+      setSessionCompleted(true);
+      stopTasmaRecitation();
     }
   };
 
@@ -651,6 +681,19 @@ export const Hifz: React.FC = () => {
           Recite from memory across all 114 Surahs. Watch verses fill up in real time as you recite, catch and correct mistakes in red, and calibrate with Sheikh Yasser Al-Dossary.
         </p>
       </div>
+
+      {/* Mobile Notice for iOS third-party browsers */}
+      {isIOSNonSafari() && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3 shadow-sm">
+          <HelpCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-bold">iPhone / iPad Browser Notice:</p>
+            <p className="leading-relaxed text-stone-700 dark:text-stone-300">
+              Apple restricts live Speech Recognition to Safari. In other mobile browsers, live verse auto-fill may not trigger. Please open Hikmat Quran directly in Safari for the optimal live experience, or use manual recitation confirmation.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Control Bar: Surah Picker, Mode Selector & Qari Selector */}
       <div className="p-4 rounded-3xl bg-white dark:bg-quran-dark-900 border border-quran-parchment-200 dark:border-quran-dark-800 shadow-sm flex flex-wrap items-center justify-between gap-4">
@@ -862,6 +905,28 @@ export const Hifz: React.FC = () => {
                 <RotateCcw className="w-4 h-4" />
                 <span>Restart</span>
               </button>
+
+              {/* Replay student's voice */}
+              {userRecordedAudioUrl && !isRecording && (
+                <button
+                  onClick={playUserVoice}
+                  className="flex items-center gap-2 px-5 py-4 rounded-2xl bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 text-amber-900 dark:text-amber-200 border border-amber-200 dark:border-amber-900 font-semibold text-xs transition"
+                >
+                  {isPlayingUserVoice ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  <span>Replay My Voice</span>
+                </button>
+              )}
+
+              {/* Mobile / Fallback Confirm Recitation */}
+              {userRecordedAudioUrl && !isRecording && !tasmaAyahStates[activeAyahIndex]?.isCompleted && (
+                <button
+                  onClick={() => handleConfirmAndAdvanceAyah(activeAyahIndex)}
+                  className="flex items-center gap-2 px-5 py-4 rounded-2xl bg-quran-emerald-800 hover:bg-quran-emerald-900 text-white font-bold text-xs transition shadow-sm active:scale-95"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-quran-gold-400" />
+                  <span>Confirm Recitation & Next</span>
+                </button>
+              )}
             </div>
 
             {/* Live speech feedback stream */}

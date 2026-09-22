@@ -1,5 +1,6 @@
 import { TajweedVoiceTestItem, TajweedVoiceEvaluationResult } from '../../types/quran';
 import { normalizeQuranicPhonetics, levenshteinDistance } from './LocalRecitationEngine';
+import { isMobileDevice, getSupportedAudioMimeType } from '../../utils/mobileSpeechHelper';
 
 export class TajweedVoiceService {
   private recognition: any = null;
@@ -20,9 +21,9 @@ export class TajweedVoiceService {
       if (SpeechRecognition) {
         try {
           this.recognition = new SpeechRecognition();
-          this.recognition.continuous = true;
+          this.recognition.continuous = !isMobileDevice();
           this.recognition.interimResults = true;
-          this.recognition.maxAlternatives = 5;
+          this.recognition.maxAlternatives = isMobileDevice() ? 1 : 5;
           this.recognition.lang = 'ar-SA';
         } catch (e) {
           console.warn('[TajweedVoiceService] SpeechRecognition init warning:', e);
@@ -33,6 +34,10 @@ export class TajweedVoiceService {
 
   isListening(): boolean {
     return this.listening;
+  }
+
+  getMediaStream(): MediaStream | null {
+    return this.mediaStream;
   }
 
   setDialect(langCode: string) {
@@ -53,32 +58,20 @@ export class TajweedVoiceService {
     this.userAudioBlobUrl = null;
     this.listening = true;
 
-    // 1. Microphone recording setup with noise suppression & studio constraints
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
-        this.mediaStream = stream;
-        this.mediaRecorder = new MediaRecorder(stream);
-        this.mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
-            this.audioChunks.push(e.data);
-          }
-        };
-        this.mediaRecorder.start(250);
-      } catch (err: any) {
-        console.warn('[TajweedVoiceService] Microphone access denied or error:', err);
-        onError('Microphone permission required to test Tajweed.');
-      }
-    }
-
-    // 2. Speech recognition listener
+    // 1. CRITICAL FOR MOBILE: Start Speech Recognition SYNCHRONOUSLY FIRST in the direct user gesture stack
     if (this.recognition) {
+      const isMobile = isMobileDevice();
+      this.recognition.continuous = !isMobile;
+      this.recognition.maxAlternatives = isMobile ? 1 : 5;
+
+      this.recognition.onend = () => {
+        if (this.listening) {
+          try {
+            this.recognition.start();
+          } catch (err) {}
+        }
+      };
+
       this.recognition.onresult = (event: any) => {
         let bestFinal = '';
         let bestInterim = '';
@@ -104,7 +97,11 @@ export class TajweedVoiceService {
 
       this.recognition.onerror = (event: any) => {
         if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          onError(`Speech note: ${event.error}`);
+          if (event.error === 'not-allowed') {
+            onError('Microphone or Speech Recognition permission denied. On iOS, please enable Siri & Dictation in Settings > General > Keyboard.');
+          } else {
+            onError(`Speech note: ${event.error}`);
+          }
         }
       };
 
@@ -114,10 +111,45 @@ export class TajweedVoiceService {
         console.warn('[TajweedVoiceService] Recognition start warning:', e);
       }
     }
+
+    // 2. Microphone recording setup with noise suppression & studio constraints (deferred to avoid mic lock)
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        this.mediaStream = stream;
+        const mimeType = getSupportedAudioMimeType();
+        this.mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        this.mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            this.audioChunks.push(e.data);
+          }
+        };
+        this.mediaRecorder.start(250);
+      } catch (err: any) {
+        console.warn('[TajweedVoiceService] Microphone access denied or error:', err);
+        if (!this.recognition) {
+          onError('Microphone permission required to test Tajweed.');
+        }
+      }
+    }
   }
 
   async stopTest(transcriptOverride?: string): Promise<TajweedVoiceEvaluationResult> {
     this.listening = false;
+
+    // Detach onend and stop recognition
+    if (this.recognition) {
+      try {
+        this.recognition.onend = null;
+        this.recognition.stop();
+      } catch (e) {}
+    }
 
     // Stop MediaRecorder and create user playback URL
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
@@ -133,17 +165,9 @@ export class TajweedVoiceService {
     }
 
     if (this.audioChunks.length > 0) {
-      const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+      const mimeType = getSupportedAudioMimeType() || 'audio/webm';
+      const audioBlob = new Blob(this.audioChunks, { type: mimeType });
       this.userAudioBlobUrl = URL.createObjectURL(audioBlob);
-    }
-
-    if (this.recognition) {
-      try {
-        this.recognition.onend = null;
-        this.recognition.stop();
-      } catch (e) {
-        console.warn(e);
-      }
     }
 
     const item = this.activeTestItem;

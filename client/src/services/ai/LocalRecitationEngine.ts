@@ -1,5 +1,6 @@
 import { Ayah } from '../../types/quran';
 import { IRecitationEngine, RecitationDiagnosticReport, RecitedWordEvaluation } from './RecitationEngine';
+import { isMobileDevice, isIOSDevice, getSupportedAudioMimeType } from '../../utils/mobileSpeechHelper';
 
 /**
  * Advanced Quranic Phonetic Normalization.
@@ -519,6 +520,10 @@ export class LocalRecitationEngine implements IRecitationEngine {
     return this.listening;
   }
 
+  getMediaStream(): MediaStream | null {
+    return this.mediaStream;
+  }
+
   setDialect(langCode: string) {
     if (this.recognition) {
       this.recognition.lang = langCode;
@@ -562,40 +567,23 @@ export class LocalRecitationEngine implements IRecitationEngine {
     this.userAudioBlobUrl = null;
     this.listening = true;
 
-    // 1. Initialize Microphone Audio Recording with Studio Acoustic Quality
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }
-        });
-        this.mediaStream = stream;
-        this.mediaRecorder = new MediaRecorder(stream);
-        this.mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            this.audioChunks.push(event.data);
-          }
-        };
-        this.mediaRecorder.start(250);
-      } catch (micErr: any) {
-        console.warn('[RecitationEngine] Microphone permission denied or unavailable:', micErr);
-        onError("Microphone access could not be obtained. Please allow microphone permissions in your browser.");
-      }
-    }
-
-    // 2. Initialize Speech Recognition with multi-alternative window rescoring and keep-alive
+    // 1. CRITICAL FOR MOBILE (iOS Safari & Android):
+    // Start SpeechRecognition SYNCHRONOUSLY FIRST in the direct user gesture callstack!
+    // iOS Safari automatically terminates user activation context after any async await tick.
     if (this.recognition) {
+      const isMobile = isMobileDevice();
+      // On mobile WebKit, continuous=true causes immediate abort or crash.
+      this.recognition.continuous = !isMobile;
+      this.recognition.interimResults = true;
+      this.recognition.maxAlternatives = isMobile ? 1 : 5;
+
       this.recognition.onend = () => {
         // Keep-alive: If student is still reciting and took a breath, seamlessly restart
         if (this.listening) {
           try {
             this.recognition.start();
-            this.consumedTokensCount = 0;
           } catch (e) {
-            // Speech recognition already active or resetting
+            // Already active or resetting
           }
         }
       };
@@ -716,17 +704,51 @@ export class LocalRecitationEngine implements IRecitationEngine {
       this.recognition.onerror = (event: any) => {
         console.warn('[RecitationEngine] Speech error:', event.error);
         if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          onError(`Speech Notice: ${event.error}`);
+          if (event.error === 'not-allowed') {
+            onError('Microphone or Speech Recognition permission was denied. On iPhone/iPad, please enable Siri & Dictation in iOS Settings > General > Keyboard.');
+          } else if (event.error === 'audio-capture') {
+            onError('Microphone is busy. Please close other recording apps and try again.');
+          } else {
+            onError(`Speech Notice: ${event.error}`);
+          }
         }
       };
 
       try {
         this.recognition.start();
       } catch (e) {
-        console.warn('[RecitationEngine] Recognition start error:', e);
+        console.warn('[RecitationEngine] Synchronous recognition start error:', e);
       }
     } else {
       console.log('[RecitationEngine] Web Speech API not natively available; recording audio via MediaRecorder.');
+    }
+
+    // 2. Initialize Microphone Audio Recording with Studio Acoustic Quality
+    // Started after speech recognition to avoid audio device locking conflicts
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        });
+        this.mediaStream = stream;
+        const mimeType = getSupportedAudioMimeType();
+        this.mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        this.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            this.audioChunks.push(event.data);
+          }
+        };
+        this.mediaRecorder.start(250);
+      } catch (micErr: any) {
+        console.warn('[RecitationEngine] Microphone recording unavailable:', micErr);
+        if (!this.recognition) {
+          onError("Microphone access could not be obtained. Please allow microphone permissions in your browser.");
+        }
+      }
     }
   }
 
@@ -757,7 +779,8 @@ export class LocalRecitationEngine implements IRecitationEngine {
     }
 
     if (this.audioChunks.length > 0) {
-      const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+      const mimeType = getSupportedAudioMimeType() || 'audio/webm';
+      const audioBlob = new Blob(this.audioChunks, { type: mimeType });
       this.userAudioBlobUrl = URL.createObjectURL(audioBlob);
     }
 

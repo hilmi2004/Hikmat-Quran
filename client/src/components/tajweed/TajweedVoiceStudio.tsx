@@ -16,6 +16,7 @@ import {
 import { TajweedVoiceTestItem, TajweedVoiceEvaluationResult } from '../../types/quran';
 import { TAJWEED_VOICE_TEST_ITEMS } from '../../data/tajweedVoiceDataset';
 import { tajweedVoiceService } from '../../services/ai/TajweedVoiceService';
+import { isIOSNonSafari } from '../../utils/mobileSpeechHelper';
 
 interface TajweedVoiceStudioProps {
   initialItemId?: string;
@@ -73,9 +74,9 @@ export const TajweedVoiceStudio: React.FC<TajweedVoiceStudioProps> = ({
     };
   }, []);
 
-  const setupVolumeMeter = async () => {
+  const setupVolumeMeter = async (existingStream?: MediaStream) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = existingStream || tajweedVoiceService.getMediaStream() || await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -121,7 +122,7 @@ export const TajweedVoiceStudio: React.FC<TajweedVoiceStudioProps> = ({
     setMicVolumeLevel(0);
   };
 
-  // Start voice recording
+  // Start voice recording (Synchronously hooks Safari user gesture)
   const handleStartRecording = async () => {
     setEvaluationResult(null);
     setErrorMessage(null);
@@ -135,16 +136,17 @@ export const TajweedVoiceStudio: React.FC<TajweedVoiceStudioProps> = ({
       setRecordingSeconds(prev => prev + 1);
     }, 1000);
 
-    setupVolumeMeter();
-
     try {
       tajweedVoiceService.setDialect(speechDialect);
-      await tajweedVoiceService.startTest(
+      // Start test synchronously to capture Safari user activation
+      const startTask = tajweedVoiceService.startTest(
         selectedItem,
         (transcript) => setLiveTranscript(transcript),
         (err) => setErrorMessage(err)
       );
       setIsRecording(true);
+      await startTask;
+      setupVolumeMeter(tajweedVoiceService.getMediaStream() || undefined);
     } catch (e: any) {
       clearInterval(timerIntervalRef.current);
       cleanupVolumeMeter();
@@ -233,6 +235,19 @@ export const TajweedVoiceStudio: React.FC<TajweedVoiceStudioProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Mobile Notice for iOS third-party browsers */}
+      {isIOSNonSafari() && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3 shadow-sm">
+          <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-bold">iPhone / iPad Browser Notice:</p>
+            <p className="leading-relaxed text-stone-700 dark:text-stone-300">
+              Apple restricts live Speech Recognition to Safari. For real-time Tajweed voice scoring on iOS, please open this app in Safari!
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Category Pills */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
         {categories.map(cat => (
