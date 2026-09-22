@@ -44,7 +44,8 @@ export const Progress: React.FC = () => {
     setIsSyncing(true);
     setSyncStatus(null);
     try {
-      const response = await fetch('http://localhost:5000/api/sync/push', {
+      const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string)?.replace(/\/$/, '') || 'http://localhost:5000';
+      const response = await fetch(`${apiBaseUrl}/api/sync/push`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

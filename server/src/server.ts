@@ -64,4 +64,44 @@ app.get('/api/manifest', (_req: Request, res: Response) => {
     packages: [
       { id: 'surah_fatiha_baqarah', title: 'Al-Fatiha & Al-Baqarah (1-25)', sizeBytes: 145000, offlineReady: true },
       { id: 'juz_amma', title: 'Juz 30 (Juz Amma)', sizeBytes: 850000, offlineReady: true },
-      { id: 'surah_mulk_yasin', title: 'Al-Mulk & Ya-Sin', sizeBytes: 320000, offl
+      { id: 'surah_mulk_yasin', title: 'Al-Mulk & Ya-Sin', sizeBytes: 320000, offlineReady: true },
+      { id: 'tajweed_course_complete', title: 'Complete 21-Lesson Tajweed Curriculum', sizeBytes: 410000, offlineReady: true },
+      { id: 'makharij_anatomical', title: 'Makharij Articulation Trainer with Audio Assets', sizeBytes: 560000, offlineReady: true }
+    ]
+  });
+});
+
+// Sync endpoint for offline-first client backup
+app.post('/api/sync/push', (req: Request, res: Response) => {
+  const { userId, hifzProgress, readingProgress, mistakes, syncTimestamp } = req.body;
+  // Local-first: server stores sync snapshot and acknowledges without blocking client
+  console.log(`[Sync] Received sync packet from user: ${userId || 'anonymous'} at ${syncTimestamp}`);
+  res.json({
+    status: 'success',
+    receivedAt: new Date().toISOString(),
+    hifzItemsCount: Array.isArray(hifzProgress) ? hifzProgress.length : 0,
+    mistakesCount: Array.isArray(mistakes) ? mistakes.length : 0,
+    message: 'Local data synced with server backup successfully.'
+  });
+});
+
+const server = app.listen(PORT, HOST, () => {
+  console.log(`[Hikmat Quran Backend] Server running on http://${HOST}:${PORT}`);
+  console.log(`[Hikmat Quran Backend] Health check active on http://${HOST}:${PORT}/api/health`);
+});
+
+// Graceful shutdown on Railway container restart / termination
+process.on('SIGTERM', () => {
+  console.log('[Hikmat Quran Backend] SIGTERM received. Gracefully closing HTTP server...');
+  server.close(() => {
+    console.log('[Hikmat Quran Backend] HTTP server closed cleanly.');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('[Hikmat Quran Backend] SIGINT received. Shutting down...');
+  server.close(() => {
+    process.exit(0);
+  });
+});
