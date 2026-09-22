@@ -5,9 +5,11 @@
   "private": true,
   "main": "server/dist/server.js",
   "scripts": {
-    "build": "npm --prefix server run build",
+    "build": "npm --prefix client run build",
     "build:client": "npm --prefix client run build",
     "build:server": "npm --prefix server run build",
+    "server:build": "npm --prefix server run build",
+    "server:start": "node server/dist/server.js",
     "start": "node server/dist/server.js",
     "dev": "npm --prefix client run dev",
     "test": "npm --prefix client run test",
