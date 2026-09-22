@@ -1,0 +1,105 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  :root {
+    --color-bg-primary: #fcfbf7;
+    --color-bg-surface: #ffffff;
+    --color-border: #ede7d5;
+    --color-emerald-deep: #062518;
+    --color-gold: #d4af37;
+  }
+
+  .dark {
+    --color-bg-primary: #070d0a;
+    --color-bg-surface: #0e1814;
+    --color-border: #1a2a22;
+    --color-emerald-deep: #062518;
+    --color-gold: #e4bf58;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+}
+
+/* Authentic Quranic Arabic Script Styling */
+.font-quran {
+  font-family: 'Amiri', 'Scheherazade New', serif;
+  line-height: 2.4;
+  word-spacing: 4px;
+}
+
+.font-mushaf-title {
+  font-family: 'Amiri', serif;
+  font-weight: 700;
+}
+
+/* Tajweed Color Visualization Rules */
+.tajweed-ghunnah {
+  color: #e11d48;
+  font-weight: 600;
+}
+
+.tajweed-qalqalah {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.tajweed-idgham {
+  color: #9333ea;
+  font-weight: 600;
+}
+
+.tajweed-ikhfa {
+  color: #059669;
+  font-weight: 600;
+}
+
+.tajweed-madd {
+  color: #ea580c;
+  font-weight: 600;
+}
+
+.tajweed-tafkhim {
+  color: #0284c7;
+  font-weight: 600;
+}
+
+.tajweed-iqlab {
+  color: #d97706;
+  font-weight: 600;
+}
+
+/* Subtle Islamic geometric watermarks */
+.islamic-pattern {
+  background-color: transparent;
+  background-image: radial-gradient(rgba(212, 175, 55, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark .islamic-pattern {
+  background-image: radial-gradient(rgba(212, 175, 55, 0.05) 1px, transparent 1px);
+}
+
+/* Custom Quran scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 175, 55, 0.6);
+}

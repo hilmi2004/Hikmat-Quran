@@ -1,0 +1,23 @@
+{
+  "name": "hikmat-quran",
+  "version": "1.0.0",
+  "description": "Offline-First AI Quran Learning, Recitation, Tajweed & Hifz Platform",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "test": "npm --prefix client run test",
+    "server": "npm --prefix server run dev"
+  },
+  "keywords": [
+    "quran",
+    "tajweed",
+    "hifz",
+    "mushaf",
+    "offline-first",
+    "speech-alignment",
+    "spaced-repetition"
+  ],
+  "author": "Hikmat Quran Engineering Team",
+  "license": "MIT"
+}
