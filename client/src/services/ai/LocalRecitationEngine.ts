@@ -638,25 +638,37 @@ export class LocalRecitationEngine implements IRecitationEngine {
     this.userAudioBlobUrl = null;
     this.listening = true;
 
+    // Immediately signal start so the UI highlights word 0 in pulsing gold:
+    if (this.onProgressCb) {
+      this.onProgressCb(0, '', [], []);
+    }
+
     // 1. CRITICAL FOR MOBILE (iOS Safari & Android):
     // Start SpeechRecognition SYNCHRONOUSLY FIRST in the direct user gesture callstack!
     // iOS Safari automatically terminates user activation context after any async await tick.
     if (this.recognition) {
       const isMobile = isMobileDevice();
-      // On mobile WebKit (Safari), continuous=true can cause immediate abort.
-      // On Android Chrome, continuous=true is fully supported and recommended.
-      this.recognition.continuous = isAndroidDevice() ? true : !isMobile;
+      this.recognition.continuous = true;
       this.recognition.interimResults = true;
-      this.recognition.maxAlternatives = isMobile ? 1 : 5;
+      this.recognition.maxAlternatives = isMobile ? 3 : 5;
 
       this.recognition.onend = () => {
         // Keep-alive: If student is still reciting and took a breath, seamlessly restart
         if (this.listening) {
-          try {
-            this.recognition.start();
-          } catch (e) {
-            // Already active or resetting
-          }
+          setTimeout(() => {
+            if (this.listening && this.recognition) {
+              try {
+                this.recognition.start();
+              } catch (e) {
+                // If it failed because it was still stopping, retry after brief delay
+                setTimeout(() => {
+                  if (this.listening && this.recognition) {
+                    try { this.recognition.start(); } catch (e2) {}
+                  }
+                }, 150);
+              }
+            }
+          }, 40);
         }
       };
 
@@ -743,7 +755,12 @@ export class LocalRecitationEngine implements IRecitationEngine {
         }
 
         const confirmedList = Array.from(this.confirmedCorrectIndices).sort((a, b) => a - b);
-        this.currentWordIdx = confirmedList.length > 0 ? confirmedList[confirmedList.length - 1] : 0;
+        // Direct the active word index to the next unconfirmed word to guide the student forward:
+        let nextTargetIdx = 0;
+        while (nextTargetIdx < targetWords.length && this.confirmedCorrectIndices.has(nextTargetIdx)) {
+          nextTargetIdx++;
+        }
+        this.currentWordIdx = nextTargetIdx < targetWords.length ? nextTargetIdx : targetWords.length - 1;
 
         if (this.onProgressCb) {
           this.onProgressCb(this.currentWordIdx, activeText, confirmedList, currentMistakeIndices);
@@ -802,8 +819,13 @@ export class LocalRecitationEngine implements IRecitationEngine {
     }
 
     // 2. Initialize Microphone Audio Recording with Studio Acoustic Quality
-    // Started after speech recognition to avoid audio device locking conflicts
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+    // IMPORTANT FOR MOBILE: On iOS Safari and Android, opening getUserMedia concurrently with SpeechRecognition
+    // locks the hardware audio session and starves SpeechRecognition, causing it to produce 0 results.
+    // Therefore, on mobile we ONLY initialize MediaRecorder if SpeechRecognition is NOT available!
+    const isMobile = isMobileDevice();
+    const shouldRecordAudio = !isMobile || !this.recognition;
+
+    if (shouldRecordAudio && typeof navigator !== 'undefined' && navigator.mediaDevices) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {

@@ -23,7 +23,7 @@ import { SURAH_LIST, RECITERS_LIST } from '../data/quranDataset';
 import { quranContentService } from '../services/quran/QuranContentService';
 import { localRecitationEngine } from '../services/ai/LocalRecitationEngine';
 import { RecitationDiagnosticReport, RecitedWordEvaluation } from '../services/ai/RecitationEngine';
-import { getSpeechPlatformNotice, isIOSNonSafari } from '../utils/mobileSpeechHelper';
+import { getSpeechPlatformNotice, isIOSNonSafari, isMobileDevice } from '../utils/mobileSpeechHelper';
 
 export const RecitationStudioPage: React.FC = () => {
   const [surahs, setSurahs] = useState<Surah[]>(SURAH_LIST);
@@ -136,6 +136,11 @@ export const RecitationStudioPage: React.FC = () => {
   // Real-time audio volume visualizer loop with shared stream (zero device conflict)
   const setupVolumeMeter = async (existingStream?: MediaStream) => {
     try {
+      // On mobile, never open a new getUserMedia stream just for the volume meter to avoid locking out SpeechRecognition
+      const isMobile = isMobileDevice();
+      if (isMobile && !existingStream && !localRecitationEngine.getMediaStream()) {
+        return;
+      }
       const stream = existingStream || localRecitationEngine.getMediaStream() || await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -254,7 +259,7 @@ export const RecitationStudioPage: React.FC = () => {
     setDiagnosticReport(null);
     setSelectedMistake(null);
     setErrorMessage(null);
-    setActiveWordIndex(-1);
+    setActiveWordIndex(0);
     setLiveMatchedWordIndices([]);
     setLiveMistakeWordIndices([]);
     setLiveTranscript('');
@@ -273,6 +278,7 @@ export const RecitationStudioPage: React.FC = () => {
           setLiveTranscript(transcript);
           if (correctIndices) setLiveMatchedWordIndices(correctIndices);
           if (mistakeIndices) setLiveMistakeWordIndices(mistakeIndices);
+          if (transcript) setMicVolumeLevel(75);
         },
         (err) => {
           setErrorMessage(err);
@@ -281,8 +287,10 @@ export const RecitationStudioPage: React.FC = () => {
       );
       setIsRecording(true);
       await startTask;
-      // Connect volume visualizer to the engine's stream once acquired
-      setupVolumeMeter(localRecitationEngine.getMediaStream() || undefined);
+      // Connect volume visualizer to the engine's stream once acquired (desktop only to prevent mobile mic lock)
+      if (!isMobileDevice()) {
+        setupVolumeMeter(localRecitationEngine.getMediaStream() || undefined);
+      }
     } catch (e: any) {
       clearInterval(timerIntervalRef.current);
       cleanupVolumeMeter();
@@ -606,12 +614,12 @@ export const RecitationStudioPage: React.FC = () => {
                   if (liveMistakeWordIndices.includes(idx)) {
                     // Mistake detected live!
                     highlightStyle = 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border-2 border-rose-500 animate-pulse font-bold scale-105';
-                  } else if (activeWordIndex === idx) {
-                    // Currently active spoken word
-                    highlightStyle = 'bg-quran-gold-500 text-stone-950 scale-110 font-bold shadow-gold-glow';
                   } else if (liveMatchedWordIndices.includes(idx)) {
-                    // Confirmed correct word
+                    // Confirmed correct word (turns serene emerald green!)
                     highlightStyle = 'bg-quran-emerald-100/90 dark:bg-quran-emerald-950/70 text-quran-emerald-900 dark:text-quran-gold-300 border border-quran-emerald-400 dark:border-quran-emerald-700 shadow-sm';
+                  } else if (activeWordIndex === idx) {
+                    // Currently active spoken word: vivid glowing gold pulsing circle/halo moving from word to word!
+                    highlightStyle = 'bg-quran-gold-400 dark:bg-quran-gold-500 text-stone-950 scale-110 font-bold shadow-gold-glow ring-4 ring-quran-gold-400/60 animate-pulse';
                   }
                 } else if (diagnosticReport && evalItem) {
                   if (evalItem.status === 'correct') {

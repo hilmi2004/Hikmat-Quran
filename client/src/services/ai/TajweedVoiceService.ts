@@ -112,8 +112,10 @@ export class TajweedVoiceService {
       }
     }
 
-    // 2. Microphone recording setup with noise suppression & studio constraints (deferred to avoid mic lock)
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+    // 2. Microphone recording setup with noise suppression & studio constraints
+    const isMobile = isMobileDevice();
+    const shouldRecordAudio = !isMobile || !this.recognition;
+    if (shouldRecordAudio && typeof navigator !== 'undefined' && navigator.mediaDevices) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {

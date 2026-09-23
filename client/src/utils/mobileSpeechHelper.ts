@@ -5,10 +5,10 @@
 
 export const isMobileDevice = (): boolean => {
   if (typeof navigator === 'undefined') return false;
-  return (
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-    (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1)
-  );
+  const ua = navigator.userAgent;
+  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const isIPad = (navigator.platform === 'MacIntel' || /Macintosh/i.test(ua)) && (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1);
+  return isMobileUA || isIPad;
 };
 
 export const isIOSDevice = (): boolean => {
