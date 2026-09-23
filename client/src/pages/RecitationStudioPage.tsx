@@ -214,7 +214,37 @@ export const RecitationStudioPage: React.FC = () => {
       // Completed all ayahs in the Surah
       playMasteryChime();
       setAdvanceNotice(`🎉 Masha'Allah! You have completed all ayahs of this Surah!`);
-      handleStopRecording();
+
+      clearInterval(timerIntervalRef.current);
+      cleanupVolumeMeter();
+      setIsRecording(false);
+      setActiveWordIndex(-1);
+      localRecitationEngine.stopListening().catch(() => {});
+
+      // Set 100% mastered report for this final Ayah so all words show emerald/mastered (not red)!
+      const completedReport: RecitationDiagnosticReport = {
+        ayahId: masteredAyah.id,
+        surahNumber: masteredAyah.surahNumber,
+        ayahNumber: masteredAyah.ayahNumber,
+        overallAccuracy: 100,
+        wordEvaluations: masteredAyah.words.map((w, idx) => ({
+          wordIndex: idx,
+          canonicalWord: w.arabic,
+          recitedWord: w.arabic,
+          status: 'correct',
+          confidence: 1.0
+        })),
+        detectedMistakesCount: 0,
+        weakWords: [],
+        tajweedObservations: ["Masha'Allah! You have completed all ayahs of this Surah with excellence!"],
+        speechConfidenceScore: 1.0,
+        isUncertain: false,
+        rawTranscript: masteredAyah.words.map(w => w.arabic).join(' ')
+      };
+      setDiagnosticReport(completedReport);
+      setSelectedMistake(null);
+      setLiveMatchedWordIndices(masteredAyah.words.map((_, i) => i));
+      setLiveMistakeWordIndices([]);
     }
   };
 

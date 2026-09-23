@@ -885,6 +885,37 @@ export class LocalRecitationEngine implements IRecitationEngine {
     const isBasmalahVerse = this.currentAyah.surahNumber === 1 && this.currentAyah.ayahNumber === 1;
     const { hasInvocation, invocationTokens, verseTokens } = extractIntroductoryInvocation(currentTokens, isBasmalahVerse);
 
+    // If the verse was already confirmed/mastered live during recitation:
+    if (this.confirmedCorrectIndices.size === canonicalWords.length) {
+      const allCorrect: RecitedWordEvaluation[] = canonicalWords.map((canonical, i) => ({
+        wordIndex: i,
+        canonicalWord: canonical,
+        recitedWord: canonical,
+        status: 'correct',
+        confidence: 0.98
+      }));
+
+      const surahPadded = String(this.currentAyah.surahNumber).padStart(3, '0');
+      const ayahPadded = String(this.currentAyah.ayahNumber).padStart(3, '0');
+      const qariUrl = `https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/${surahPadded}${ayahPadded}.mp3`;
+
+      return {
+        ayahId: this.currentAyah.id,
+        surahNumber: this.currentAyah.surahNumber,
+        ayahNumber: this.currentAyah.ayahNumber,
+        overallAccuracy: 100,
+        wordEvaluations: allCorrect,
+        detectedMistakesCount: 0,
+        weakWords: [],
+        tajweedObservations: ["Masha'Allah! Ayah recitation mastered accurately."],
+        speechConfidenceScore: 0.98,
+        isUncertain: false,
+        userAudioUrl: this.userAudioBlobUrl || undefined,
+        qariAudioUrl: qariUrl,
+        rawTranscript: fullSpoken
+      };
+    }
+
     // If nothing was spoken or transcribed live for the verse itself:
     if (verseTokens.length === 0) {
 

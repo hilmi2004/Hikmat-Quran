@@ -245,6 +245,47 @@ describe('Recitation Speech Evaluation & Silence Detection', () => {
     expect(autoAdvanced).toBe(false);
   });
 
+  it('should evaluate 100% accuracy and keep all words correct when verse was mastered live before stopListening', async () => {
+    const engine = new LocalRecitationEngine();
+    const ayah7 = {
+      id: '1:7',
+      surahNumber: 1,
+      ayahNumber: 7,
+      textSimple: 'صراط الذين انعمت عليهم غير المغضوب عليهم ولا الضالين',
+      words: [
+        { position: 1, arabic: 'صِرَٰطَ' },
+        { position: 2, arabic: 'ٱلَّذِينَ' },
+        { position: 3, arabic: 'أَنْعَمْتَ' },
+        { position: 4, arabic: 'عَلَيْهِمْ' },
+        { position: 5, arabic: 'غَيْرِ' },
+        { position: 6, arabic: 'ٱلْمَغْضُوبِ' },
+        { position: 7, arabic: 'عَلَيْهِمْ' },
+        { position: 8, arabic: 'وَلَا' },
+        { position: 9, arabic: 'ٱلضَّآلِّينَ' }
+      ]
+    } as any;
+
+    let autoAdvanced = false;
+    await engine.startListening(
+      ayah7,
+      () => {},
+      () => {},
+      () => { autoAdvanced = true; }
+    );
+
+    // Simulate speech recognition having confirmed all 9 words live
+    for (let i = 0; i < 9; i++) {
+      (engine as any).confirmedCorrectIndices.add(i);
+    }
+    // Simulate tokens were consumed when mastery triggered
+    (engine as any).consumedTokensCount = 9;
+
+    const report = await engine.stopListening();
+    expect(report.overallAccuracy).toBe(100);
+    expect(report.detectedMistakesCount).toBe(0);
+    expect(report.wordEvaluations.every(w => w.status === 'correct')).toBe(true);
+    expect(report.wordEvaluations.some(w => w.status === 'skipped')).toBe(false);
+  });
 
   it('should accurately isolate introductory Basmalah and Istiadhah from verse tokens', () => {
     // 1. Basmalah before a non-Fatihah verse
