@@ -218,6 +218,18 @@ export const TajweedVoiceStudio: React.FC<TajweedVoiceStudioProps> = ({
     userAudioRef.current.onended = () => setIsPlayingUserVoice(false);
   };
 
+  const handleManualPass = () => {
+    if (!evaluationResult) return;
+    setEvaluationResult({
+      ...evaluationResult,
+      passed: true,
+      status: 'good',
+      accuracy: 100,
+      feedbackTitle: 'Self-Verified Recitation',
+      detailedFeedback: 'You verified that your recitation matched the required Tajweed rule after reviewing your recorded audio.'
+    });
+  };
+
   // Filter items by category
   const categories = [
     { id: 'all', label: 'All Tajweed Drills' },
@@ -534,6 +546,17 @@ export const TajweedVoiceStudio: React.FC<TajweedVoiceStudioProps> = ({
                           <span>Hear Sheikh Yasser Al-Dossary</span>
                         </>
                       )}
+                    </button>
+                  )}
+
+                  {/* Self-verify pass button for mobile/offline audio */}
+                  {evaluationResult.userAudioUrl && !evaluationResult.passed && (
+                    <button
+                      onClick={handleManualPass}
+                      className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-quran-emerald-800 hover:bg-quran-emerald-900 text-white text-xs font-bold shadow-sm transition active:scale-95"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-quran-gold-400" />
+                      <span>Confirm Recitation (Pass)</span>
                     </button>
                   )}
 

@@ -1,6 +1,6 @@
 import { TajweedVoiceTestItem, TajweedVoiceEvaluationResult } from '../../types/quran';
 import { normalizeQuranicPhonetics, levenshteinDistance } from './LocalRecitationEngine';
-import { isMobileDevice, isAndroidDevice, getSupportedAudioMimeType, analyzeAudioBlob } from '../../utils/mobileSpeechHelper';
+import { isMobileDevice, isAndroidDevice, getSupportedAudioMimeType } from '../../utils/mobileSpeechHelper';
 
 export class TajweedVoiceService {
   private recognition: any = null;
@@ -181,28 +181,6 @@ export class TajweedVoiceService {
 
     // 1. Check for silence / no audio detected
     if (!fullSpoken) {
-      if (transcriptOverride === undefined && this.audioChunks.length > 0 && this.userAudioBlobUrl) {
-        const mimeType = getSupportedAudioMimeType() || 'audio/webm';
-        const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-        const acousticMetrics = await analyzeAudioBlob(audioBlob);
-
-        if (acousticMetrics.hasVoiceEnergy && acousticMetrics.durationSeconds >= 0.5) {
-          return {
-            accuracy: 92,
-            passed: true,
-            status: 'good',
-            recognizedText: item.targetArabic,
-            targetArabic: item.targetArabic,
-            detectedRuleApplication: true,
-            feedbackTitle: 'Tajweed Rule Articulated Correctly',
-            detailedFeedback: `Masha'Allah! Your pronunciation was captured and acoustically validated (${acousticMetrics.durationSeconds.toFixed(1)}s).`,
-            anatomicalTip: item.coachingInstruction,
-            userAudioUrl: this.userAudioBlobUrl || undefined,
-            qariAudioUrl: item.audioAyahUrl
-          };
-        }
-      }
-
       return {
         accuracy: 0,
         passed: false,
@@ -210,13 +188,18 @@ export class TajweedVoiceService {
         recognizedText: '',
         targetArabic: item.targetArabic,
         detectedRuleApplication: false,
-        feedbackTitle: 'No Recitation Detected',
-        detailedFeedback: `We could not hear your voice. Please ensure your microphone is enabled and recite "${item.targetArabic}" clearly.`,
+        feedbackTitle: this.audioChunks.length > 0 && this.userAudioBlobUrl
+          ? 'Voice Recorded (Self-Check Available)'
+          : 'No Recitation Detected',
+        detailedFeedback: this.audioChunks.length > 0 && this.userAudioBlobUrl
+          ? `Your voice was recorded but could not be transcribed by the browser speech engine. You can replay your audio to self-verify, or try opening Hikmat Quran in Safari (iOS) or Chrome (Android) for live recognition.`
+          : `We could not hear your voice. Please ensure your microphone is enabled and recite "${item.targetArabic}" clearly.`,
         anatomicalTip: item.coachingInstruction,
         userAudioUrl: this.userAudioBlobUrl || undefined,
         qariAudioUrl: item.audioAyahUrl
       };
     }
+
 
 
     // 2. Perform specialized Tajweed & Makhraj phonetic evaluation

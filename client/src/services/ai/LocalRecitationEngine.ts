@@ -4,8 +4,7 @@ import {
   isMobileDevice, 
   isIOSDevice, 
   isAndroidDevice,
-  getSupportedAudioMimeType,
-  analyzeAudioBlob
+  getSupportedAudioMimeType
 } from '../../utils/mobileSpeechHelper';
 
 /**
@@ -103,7 +102,11 @@ export function consolidateArabicPrefixes(tokens: string[]): string[] {
 /**
  * Determines whether a spoken token is phonetically equivalent to a canonical Quranic word,
  * accounting for classical Tajweed pronunciation, Uthmani orthography, Waslah/Shamsiyyah elisions,
- * tanween variations, and speech recognition transcription characteristics.
+ * and speech recognition transcription characteristics.
+ *
+ * STRICT MODE: Only direct normalized match is accepted.
+ * BALANCED MODE: Tolerates speech-engine quirks (prefix detachment, article elision, terminal hamza)
+ *   but does NOT tolerate missing/extra letters, wrong elongations, or consonant substitutions.
  */
 export function areQuranicWordsPhoneticallyEquivalent(
   canonicalWord: string,
@@ -132,38 +135,100 @@ export function areQuranicWordsPhoneticallyEquivalent(
     if (normSpk.startsWith(prefix) && normSpk.slice(prefix.length) === normCan) return true;
   }
 
-  // 4. Tanween nunation tolerance at word end:
-  // "احد" <=> "احدا" <=> "احدن", "كفوا" <=> "كفو"
-  const stripNunation = (s: string) => s.replace(/[ان]$/, '');
-  if (stripNunation(normCan) === stripNunation(normSpk)) return true;
-
-  // 5. Quranic rasm dagger-alif & elongation equivalence:
-  // e.g. "مالك" <=> "ملك", "هاذا" <=> "هذا", "الرحمان" <=> "الرحمن", "داود" <=> "داوود"
-  const stripLongVowels = (s: string) => s.replace(/[اوي]/g, '');
-  const canBase = stripLongVowels(normCan);
-  const spkBase = stripLongVowels(normSpk);
-  if (canBase === spkBase && canBase.length >= 3) {
-    return true;
+  // 4. Tanween nunation tolerance at word end (only for words with 3+ base characters):
+  // "احدا" <=> "احد" (tanween alif dropped), "كفوا" <=> "كفو"
+  // Does NOT match fundamentally different words — both bases must be ≥ 3 chars.
+  if (normCan.length >= 3 && normSpk.length >= 3) {
+    const stripTanween = (s: string) => s.replace(/[ان]$/, '');
+    const canBase = stripTanween(normCan);
+    const spkBase = stripTanween(normSpk);
+    if (canBase === spkBase && canBase.length >= 2) return true;
   }
 
-  // 6. Terminal Hamza elision:
+  // 5. Terminal Hamza elision:
   // "كفوا" <=> "كفؤ", "شيء" <=> "شي", "سوء" <=> "سو"
-  const stripTerminalHamza = (s: string) => s.replace(/[ءا]$/, '');
-  if (stripTerminalHamza(normCan) === stripTerminalHamza(normSpk) && normCan.length >= 3) {
-    return true;
+  if (normCan.length >= 3 && normSpk.length >= 2) {
+    const stripTerminalHamza = (s: string) => s.replace(/[ءا]$/, '');
+    if (stripTerminalHamza(normCan) === stripTerminalHamza(normSpk)) {
+      return true;
+    }
   }
 
-  // 7. Minor 1-character variance on long words in balanced mode:
-  // (e.g. "المستقيم" length 8 vs "المستقين" dist 1)
+  // 6. Minor 1-character variance ONLY on very long words (≥ 8 normalized chars):
+  // This catches speech-engine transcription noise on compound words like "المستقيم"/"المستقين"
+  // but does NOT forgive errors on shorter words.
   if (!isStrict) {
     const dist = levenshteinDistance(normCan, normSpk);
-    if (dist === 1 && normCan.length >= 6) {
+    if (dist === 1 && normCan.length >= 8 && normSpk.length >= 7) {
       return true;
     }
   }
 
   return false;
 }
+
+/**
+ * Generates specific letter-level feedback when a spoken word differs from the canonical.
+ * Identifies missing letters, extra letters, and substituted letters for precise coaching.
+ */
+export function generateLetterLevelFeedback(
+  canonicalWord: string,
+  spokenToken: string
+): string {
+  const normCan = normalizeQuranicPhonetics(canonicalWord);
+  const normSpk = normalizeQuranicPhonetics(spokenToken);
+
+  if (normCan === normSpk) return '';
+
+  const dist = levenshteinDistance(normCan, normSpk);
+
+  // Build character-level diff using Levenshtein backtrack
+  const n = normCan.length;
+  const m = normSpk.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+  for (let i = 0; i <= n; i++) dp[i][0] = i;
+  for (let j = 0; j <= m; j++) dp[0][j] = j;
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (normCan[i - 1] === normSpk[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to identify specific operations
+  const issues: string[] = [];
+  let ci = n, cj = m;
+  while (ci > 0 || cj > 0) {
+    if (ci > 0 && cj > 0 && normCan[ci - 1] === normSpk[cj - 1]) {
+      ci--; cj--;
+    } else if (ci > 0 && cj > 0 && dp[ci][cj] === dp[ci - 1][cj - 1] + 1) {
+      issues.push(`Letter '${normCan[ci - 1]}' was pronounced as '${normSpk[cj - 1]}'`);
+      ci--; cj--;
+    } else if (ci > 0 && dp[ci][cj] === dp[ci - 1][cj] + 1) {
+      issues.push(`Missing letter '${normCan[ci - 1]}'`);
+      ci--;
+    } else if (cj > 0 && dp[ci][cj] === dp[ci][cj - 1] + 1) {
+      issues.push(`Extra letter '${normSpk[cj - 1]}' was added`);
+      cj--;
+    } else {
+      // Fallback
+      if (ci > 0) ci--;
+      else if (cj > 0) cj--;
+    }
+  }
+
+  if (issues.length === 0) {
+    return `You recited "${spokenToken}" — expected "${canonicalWord}". Edit distance: ${dist}.`;
+  }
+
+  issues.reverse();
+  const summary = issues.slice(0, 3).join('; ');
+  return `${summary}. Expected: "${canonicalWord}".`;
+}
+
 
 export interface InvocationExtractionResult {
   hasInvocation: boolean;
@@ -690,11 +755,17 @@ export class LocalRecitationEngine implements IRecitationEngine {
           ? extraTokensCount > 0
           : extraTokensCount > Math.max(1, Math.floor(targetWords.length * 0.15));
 
+        // Verify spoken token count is reasonable relative to expected word count
+        // Prevents mastery from false positives when speech engine returns gibberish
+        const tokenCountRatio = verseTokens.length / Math.max(targetWords.length, 1);
+        const isTokenCountReasonable = tokenCountRatio >= 0.5 && tokenCountRatio <= 2.5;
+
         // Live verse mastery check
         const isMastered = (
           this.confirmedCorrectIndices.size === targetWords.length &&
           currentMistakeIndices.length === 0 &&
           !hasDisqualifyingExtraWords &&
+          isTokenCountReasonable &&
           !this.isTransitioning
         );
 
@@ -816,51 +887,6 @@ export class LocalRecitationEngine implements IRecitationEngine {
 
     // If nothing was spoken or transcribed live for the verse itself:
     if (verseTokens.length === 0) {
-      // Check if user recorded audio (e.g. on mobile devices where Web Speech API was blocked/silent)
-      // Only execute acoustic validation if this was NOT an explicit empty transcript override from test
-      if (transcriptOverride === undefined && this.audioChunks.length > 0 && this.userAudioBlobUrl) {
-        const mimeType = getSupportedAudioMimeType() || 'audio/webm';
-        const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-        const acousticMetrics = await analyzeAudioBlob(audioBlob);
-
-        // If vocal energy was detected and recording was at least 0.8s, validate recitation!
-        if (acousticMetrics.hasVoiceEnergy && acousticMetrics.durationSeconds >= 0.8) {
-          const wordEvaluations: RecitedWordEvaluation[] = canonicalWords.map((canonical, i) => ({
-            wordIndex: i,
-            canonicalWord: canonical,
-            recitedWord: canonical,
-            status: 'correct',
-            confidence: 0.96
-          }));
-
-          const surahPadded = String(this.currentAyah.surahNumber).padStart(3, '0');
-          const ayahPadded = String(this.currentAyah.ayahNumber).padStart(3, '0');
-          const qariUrl = `https://everyayah.com/data/Yasser_Ad-Dussary_128kbps/${surahPadded}${ayahPadded}.mp3`;
-
-          const masteredAyah = this.currentAyah;
-          if (this.onAyahCompleteCb) {
-            this.onAyahCompleteCb(masteredAyah);
-          }
-
-          return {
-            ayahId: this.currentAyah.id,
-            surahNumber: this.currentAyah.surahNumber,
-            ayahNumber: this.currentAyah.ayahNumber,
-            overallAccuracy: 96,
-            wordEvaluations,
-            detectedMistakesCount: 0,
-            weakWords: [],
-            tajweedObservations: [
-              `Recitation audio verified via acoustic analysis (${acousticMetrics.durationSeconds.toFixed(1)}s). Quranic vocalization and cadence confirmed.`
-            ],
-            speechConfidenceScore: 0.95,
-            isUncertain: false,
-            userAudioUrl: this.userAudioBlobUrl || undefined,
-            qariAudioUrl: qariUrl,
-            rawTranscript: canonicalWords.join(' ')
-          };
-        }
-      }
 
       const allSkipped: RecitedWordEvaluation[] = canonicalWords.map((canonical, i) => ({
         wordIndex: i,
@@ -918,13 +944,16 @@ export class LocalRecitationEngine implements IRecitationEngine {
         });
         correctCount++;
       } else if (pair.status === 'substituted') {
+        const letterFeedback = pair.spokenToken
+          ? generateLetterLevelFeedback(pair.canonicalWord, pair.spokenToken)
+          : `Word "${pair.canonicalWord}" was not recited correctly.`;
         wordEvaluations.push({
           wordIndex: pair.canonicalIndex,
           canonicalWord: pair.canonicalWord,
           recitedWord: pair.spokenToken,
           status: 'substituted',
           confidence: 0.90,
-          feedback: `You recited "${pair.spokenToken}" instead of "${pair.canonicalWord}". Check vowel/harakah accuracy.`
+          feedback: letterFeedback
         });
         weakWords.push(pair.canonicalWord);
       } else {

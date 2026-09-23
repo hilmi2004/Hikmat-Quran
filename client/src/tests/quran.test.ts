@@ -4,6 +4,8 @@ import {
   normalizeQuranicPhonetics,
   consolidateArabicPrefixes,
   alignQuranicWordSequences,
+  areQuranicWordsPhoneticallyEquivalent,
+  generateLetterLevelFeedback,
   levenshteinDistance, 
   LocalRecitationEngine,
   extractIntroductoryInvocation
@@ -89,16 +91,24 @@ describe('Needleman-Wunsch Quranic Sequence Alignment & Window Rescoring', () =>
 
   it('should support strict precision mode requiring exact phonetic match', () => {
     const canonical = ['ٱلْمُسْتَقِيمَ'];
-    // Minor 1-character terminal variance ('ن' instead of 'م')
+    // Minor 1-character terminal variance ('ن' instead of 'م') — word is 8+ chars normalized
     const spokenSlightVariance = ['المستقين'];
 
-    // In balanced mode, minor variance on long word is tolerated
+    // In balanced mode, minor variance on very long word (8+ chars) is tolerated
     const balanced = alignQuranicWordSequences(canonical, spokenSlightVariance, false);
     expect(balanced[0].status).toBe('correct');
 
     // In strict mode, exact match is required
     const strict = alignQuranicWordSequences(canonical, spokenSlightVariance, true);
     expect(strict[0].status).toBe('substituted');
+  });
+
+  it('should NOT tolerate 1-char variance on shorter words (< 8 chars)', () => {
+    // "الرحيم" is 6 chars normalized — 1-char variance should NOT be tolerated
+    const canonical = ['ٱلرَّحِيمِ'];
+    const spoken = ['الرحين']; // 1-char diff but word is only 6 chars
+    const result = alignQuranicWordSequences(canonical, spoken, false);
+    expect(result[0].status).toBe('substituted');
   });
 });
 
@@ -211,7 +221,7 @@ describe('Recitation Speech Evaluation & Silence Detection', () => {
     expect(report.wordEvaluations[0].status).toBe('correct');
   });
 
-  it('should validate recitation and auto-advance when audio was recorded on mobile even if live recognizer returned empty', async () => {
+  it('should NOT auto-pass with 96% accuracy when audio is recorded on mobile but recognition returned empty', async () => {
     const engine = new LocalRecitationEngine();
     let autoAdvanced = false;
     await engine.startListening(
@@ -226,12 +236,13 @@ describe('Recitation Speech Evaluation & Silence Detection', () => {
     (engine as any).audioChunks = [fakeChunk];
     (engine as any).userAudioBlobUrl = 'blob:http://localhost/fake-audio';
 
-    // Calling stopListening() with no transcript override (speech recognition was silent)
+    // Calling stopListening() with no transcript override (speech recognition was silent on mobile)
+    // Should NOT auto-pass — should report 0% accuracy with isUncertain = true
     const report = await engine.stopListening();
-    expect(report.overallAccuracy).toBeGreaterThanOrEqual(95);
-    expect(report.detectedMistakesCount).toBe(0);
-    expect(report.wordEvaluations.every(w => w.status === 'correct')).toBe(true);
-    expect(autoAdvanced).toBe(true);
+    expect(report.overallAccuracy).toBe(0);
+    expect(report.isUncertain).toBe(true);
+    expect(report.wordEvaluations.every(w => w.status === 'skipped')).toBe(true);
+    expect(autoAdvanced).toBe(false);
   });
 
 
@@ -487,9 +498,9 @@ describe('Hifz Oral Tasma & Progressive Word Fill', () => {
     const alignWaslah = alignQuranicWordSequences(ihdinaCanonical, spokenWaslah);
     expect(alignWaslah.every(a => a.status === 'correct')).toBe(true);
 
-    // 2. Dagger Alif rasm variants: "مَٰلِكِ" vs "ملك" and "مالك"
+    // 2. Dagger Alif rasm variants: "مَٰلِكِ" (dagger alif) vs "مالك" (spoken standard alif)
     const malikCanonical = ['مَٰلِكِ', 'يَوْمِ', 'ٱلدِّينِ'];
-    const spokenMalik = ['ملك', 'يوم', 'الدين'];
+    const spokenMalik = ['مالك', 'يوم', 'الدين'];
     const alignMalik = alignQuranicWordSequences(malikCanonical, spokenMalik);
     expect(alignMalik.every(a => a.status === 'correct')).toBe(true);
 
@@ -521,4 +532,58 @@ describe('Hifz Oral Tasma & Progressive Word Fill', () => {
 });
 
 
+describe('Strict Phonetic Precision — No False Positives', () => {
+  it('should NOT match "ملك" (king) with "مالك" (owner) — missing elongation must be detected', () => {
+    // These are two DIFFERENT Quranic words (Surah 1:4 has "مَٰلِكِ" not "ملك")
+    expect(areQuranicWordsPhoneticallyEquivalent('مالك', 'ملك')).toBe(false);
+  });
 
+  it('should NOT match "عالم" (knower) with "علم" (knowledge) — different words', () => {
+    expect(areQuranicWordsPhoneticallyEquivalent('عالم', 'علم')).toBe(false);
+  });
+
+  it('should NOT match "سميع" (all-hearing) with "سمع" (heard) — missing yaa elongation', () => {
+    expect(areQuranicWordsPhoneticallyEquivalent('سميع', 'سمع')).toBe(false);
+  });
+
+  it('should correctly match words that only differ in diacritics/rasm', () => {
+    // Uthmani "مَٰلِكِ" normalizes to "مالك" via dagger alif expansion
+    expect(areQuranicWordsPhoneticallyEquivalent('مَٰلِكِ', 'مالك')).toBe(true);
+    // "ٱللَّهِ" normalizes to "الله"
+    expect(areQuranicWordsPhoneticallyEquivalent('ٱللَّهِ', 'الله')).toBe(true);
+    // "ٱلرَّحْمَٰنِ" normalizes to "الرحمن" (dagger alif + Uthmani rasm mapping)
+    expect(areQuranicWordsPhoneticallyEquivalent('ٱلرَّحْمَٰنِ', 'الرحمن')).toBe(true);
+  });
+
+  it('should handle tanween tolerance correctly — only for genuine tanween, not different words', () => {
+    // Genuine tanween: "احدا" <=> "احد" (tanween alif dropped by speech engine)
+    expect(areQuranicWordsPhoneticallyEquivalent('احدا', 'احد')).toBe(true);
+    // NOT tanween — "ان" vs "ا" are fundamentally different 2-char words
+    expect(areQuranicWordsPhoneticallyEquivalent('ان', 'ا')).toBe(false);
+  });
+
+  it('should detect 1-char variance on short words as substitution errors', () => {
+    // "رب" vs "رن" — only 2 chars, must be flagged
+    expect(areQuranicWordsPhoneticallyEquivalent('رب', 'رن')).toBe(false);
+    // "الرحيم" vs "الرحين" — 6 chars, still below 8 threshold
+    expect(areQuranicWordsPhoneticallyEquivalent('الرحيم', 'الرحين')).toBe(false);
+  });
+});
+
+describe('Letter-Level Feedback Generation', () => {
+  it('should identify a missing letter', () => {
+    const feedback = generateLetterLevelFeedback('مالك', 'ملك');
+    expect(feedback).toContain('Missing');
+    expect(feedback).toContain('ا');
+  });
+
+  it('should identify a letter substitution', () => {
+    const feedback = generateLetterLevelFeedback('الرحيم', 'الرحين');
+    expect(feedback).toContain("'م'");
+    expect(feedback).toContain("'ن'");
+  });
+
+  it('should return empty string for matching words', () => {
+    expect(generateLetterLevelFeedback('الحمد', 'الحمد')).toBe('');
+  });
+});

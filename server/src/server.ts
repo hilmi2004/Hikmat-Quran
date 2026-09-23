@@ -141,19 +141,17 @@ app.post('/api/recitation/evaluate-audio', async (req: Request, res: Response) =
       }
     }
 
-    // High-confidence acoustic evaluation when external Whisper is unconfigured
-    const hasAdequateDuration = duration >= 1.0;
-    const accuracy = hasAdequateDuration ? 96 : 75;
-
+    // No external Whisper API configured — cannot transcribe audio server-side.
+    // Return an honest response telling the client to rely on browser-side speech recognition.
     res.json({
-      status: 'success',
-      provider: 'hikmat-acoustic-engine',
-      transcription: expectedArabic || '',
-      accuracy,
-      mastered: hasAdequateDuration,
+      status: 'unavailable',
+      provider: 'none',
+      transcription: '',
+      accuracy: 0,
+      mastered: false,
       surahNumber,
       ayahNumber,
-      message: 'Audio verified by Hikmat Quran Acoustic Recitation Processor'
+      message: 'Server-side audio transcription requires a GROQ_API_KEY or OPENAI_API_KEY environment variable. Please use browser-based speech recognition, or configure a Whisper API key on Railway.'
     });
   } catch (err: any) {
     console.error('[Recitation AI] Evaluation error:', err);
